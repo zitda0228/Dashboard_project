@@ -1,13 +1,3 @@
-"""
-예제: 신규 권역 성장 기회
-5주차 설계 예제의 쿼리를 SQLite로 바꾸고, 6주차 리포트의 KPI 카드 3개 · 차트 3장을
-필터에 반응하도록 옮겨 둔 코드입니다. 
-
-탭 3개(개요 · 탐색 · 액션) 뼈대가 들어 있습니다.
-- ✏️표시: 내 5주차 · 6주차 결과물로 변경할 곳
-- [블록 A] · [블록 B] · [블록 C]: Gemini에게 받은 블록으로 통째로 바꿀 곳
-  (===== 시작 줄과 ===== 끝 줄 사이를 지우고 받은 블록을 붙임, 첫 줄은 맨 앞에 빈칸 없이)
-"""
 import sqlite3
 
 import pandas as pd
@@ -252,6 +242,97 @@ with tab_overview:
 # ===== [블록 B] 탐색 — 집단 비교 · 드릴다운 단계에서 이 블록을 통째로 바꿈 =====
 with tab_explore:
     st.caption("이 탭에서 볼 수 있는 것: 집단 비교와 드릴다운 — 어디서, 언제부터인가")
+
+    compare_target = st.radio("비교 기준", ["가입채널", "플랫폼"], horizontal=True)
+
+    steps = ["가입자", "식당조회", "장바구니", "결제시작", "첫주문30일"]
+    df_compare = f.groupby(compare_target)[steps].sum().reset_index()
+
+    if hide_small:
+        small_groups = df_compare[df_compare["가입자"] < SMALL][compare_target].tolist()
+        if small_groups:
+            st.caption(f"제외한 집단: {', '.join(small_groups)} (가입자 {SMALL}명 미만)")
+            df_compare = df_compare[df_compare["가입자"] >= SMALL]
+
+    if df_compare.empty:
+        st.warning("조건에 해당하는 집단이 없습니다.")
+    else:
+        warning_groups = df_compare[df_compare["가입자"] < SMALL][compare_target].tolist()
+        if warning_groups:
+            st.caption(f"안내: {', '.join(warning_groups)} 집단은 가입자가 {SMALL}명 미만으로 값이 크게 흔들릴 수 있습니다.")
+
+        left, right = st.columns(2)
+
+        df_funnel_melt = pd.DataFrame()
+        for _, row in df_compare.iterrows():
+            group_name = row[compare_target]
+            base_count = row["가입자"]
+            for step in steps:
+                val = row[step]
+                pct = (val / base_count * 100) if base_count else 0
+                df_funnel_melt = pd.concat([df_funnel_melt, pd.DataFrame([{
+                    compare_target: group_name,
+                    "퍼널단계": step,
+                    "누적전환율": round(pct, 1),
+                    "사람수": val
+                }])])
+
+        fig_funnel = px.funnel(
+            df_funnel_melt,
+            x="누적전환율",
+            y="퍼널단계",
+            color=compare_target,
+            hover_data=["사람수"],
+            labels={
+                "누적전환율": "누적 전환율(%)",
+                "퍼널단계": "퍼널 단계",
+                compare_target: "집단",
+                "사람수": "사람 수(명)"
+            },
+            title="집단별 누적 전환율 퍼널"
+        )
+        left.plotly_chart(fig_funnel, width="stretch")
+
+        df_rate_melt = pd.DataFrame()
+        pairs = [
+            ("가입자", "식당조회"),
+            ("식당조회", "장바구니"),
+            ("장바구니", "결제시작"),
+            ("결제시작", "첫주문30일")
+        ]
+        for _, row in df_compare.iterrows():
+            group_name = row[compare_target]
+            for prev_step, curr_step in pairs:
+                p_val = row[prev_step]
+                c_val = row[curr_step]
+                rate_val = (c_val / p_val * 100) if p_val else 0
+                df_rate_melt = pd.concat([df_rate_melt, pd.DataFrame([{
+                    compare_target: group_name,
+                    "구간": f"{prev_step} → {curr_step}",
+                    "단계전환율": round(rate_val, 1),
+                    "직전단계사람수": p_val,
+                    "현재단계사람수": c_val
+                }])])
+
+        fig_bar = px.bar(
+            df_rate_melt,
+            x="구간",
+            y="단계전환율",
+            color=compare_target,
+            barmode="group",
+            text="단계전환율",
+            hover_data=["직전단계사람수", "현재단계사람수"],
+            labels={
+                "구간": "단계 구간",
+                "단계전환율": "단계 전환율(%)",
+                compare_target: "집단",
+                "직전단계사람수": "직전 단계 사람 수(명)",
+                "현재단계사람수": "현재 단계 사람 수(명)"
+            },
+            title="집단별 단계 전환율 비교"
+        )
+        fig_bar.update_traces(texttemplate='%{text:.1f}%', textposition='outside')
+        right.plotly_chart(fig_bar, width="stretch")
 # ===== [블록 B] 끝 =====
 
 # ===== [블록 C] 액션 — 액션 카드 단계에서 이 줄 아래부터 파일 끝까지를 받은 블록으로 바꿈 =====
