@@ -333,6 +333,92 @@ with tab_explore:
         )
         fig_bar.update_traces(texttemplate='%{text:.1f}%', textposition='outside')
         right.plotly_chart(fig_bar, width="stretch")
+
+    st.divider()
+    st.markdown("### 드릴다운: 언제부터, 무엇 때문일까")
+
+    available_groups = df_compare[compare_target].tolist() if not df_compare.empty else []
+    if available_groups:
+        d_col1, d_col2 = st.columns(2)
+        with d_col1:
+            selected_group = st.selectbox("자세히 볼 집단", available_groups)
+        with d_col2:
+            step_options = [
+                "가입 → 30일 첫 주문",
+                "가입 → 식당조회",
+                "식당조회 → 장바구니",
+                "장바구니 → 결제시작",
+                "결제시작 → 30일 첫 주문"
+            ]
+            selected_step = st.selectbox("단계", step_options)
+
+        other_axis = "플랫폼" if compare_target == "가입채널" else "가입채널"
+
+        sub_f = f[f[compare_target] == selected_group]
+
+        grouped_sub = sub_f.groupby(["가입월", other_axis])[["가입자", "식당조회", "장바구니", "결제시작", "첫주문30일"]].sum().reset_index()
+
+        if selected_step == "가입 → 30일 첫 주문":
+            num_col, den_col = "첫주문30일", "가입자"
+        elif selected_step == "가입 → 식당조회":
+            num_col, den_col = "식당조회", "가입자"
+        elif selected_step == "식당조회 → 장바구니":
+            num_col, den_col = "장바구니", "식당조회"
+        elif selected_step == "장바구니 → 결제시작":
+            num_col, den_col = "결제시작", "장바구니"
+        else:
+            num_col, den_col = "첫주문30일", "결제시작"
+
+        grouped_sub["전환율"] = grouped_sub.apply(
+            lambda r: round(r[num_col] / r[den_col] * 100, 1) if r[den_col] > 0 else None, axis=1
+        )
+
+        fig_drill1 = px.line(
+            grouped_sub,
+            x="가입월",
+            y="전환율",
+            color=other_axis,
+            markers=True,
+            hover_data=[num_col, den_col],
+            labels={
+                "가입월": "가입월",
+                "전환율": "전환율(%)",
+                other_axis: other_axis,
+                num_col: "분자 사람 수(명)",
+                den_col: "직전 단계 사람 수(명)"
+            },
+            title=f"① {selected_group}의 가입월별 {selected_step} 전환율 — {other_axis}별로 쪼개 보기"
+        )
+        fig_drill1.update_xaxes(type="category")
+        st.plotly_chart(fig_drill1, width="stretch")
+        st.caption("모든 갈래가 함께 움직였다면, 그 축은 원인이 아닙니다.")
+
+        f_copy = f.copy()
+        f_copy["그룹구분"] = f_copy[compare_target].apply(lambda x: selected_group if x == selected_group else "그 외")
+
+        bar_grouped = f_copy.groupby(["가입월", "그룹구분"])["가입자"].sum().reset_index()
+
+        fig_drill2 = px.bar(
+            bar_grouped,
+            x="가입월",
+            y="가입자",
+            color="그룹구분",
+            barmode="stack",
+            color_discrete_map={selected_group: "#1f77b4", "그 외": "#d3d3d3"},
+            labels={
+                "가입월": "가입월",
+                "가입자": "가입자 수(명)",
+                "그룹구분": "집단 구분"
+            },
+            title=f"② 가입월별 가입자 수 구성 ({selected_group} vs 그 외)"
+        )
+        fig_drill2.update_xaxes(type="category")
+        st.plotly_chart(fig_drill2, width="stretch")
+        st.caption("전체 전환율이 움직인 시점에 이 집단의 비중이 함께 바뀌었다면 구성 변화가 원인 후보입니다. 함께 움직였다고 원인이 확정되지는 않습니다.")
+
+        with st.expander(f"🤖 AI 해설 · {selected_group}", expanded=False):
+            st.write(AI_NOTES.get(selected_group, "이 집단의 해설은 아직 없습니다."))
+        st.caption(AI_SOURCE)
 # ===== [블록 B] 끝 =====
 
 # ===== [블록 C] 액션 — 액션 카드 단계에서 이 줄 아래부터 파일 끝까지를 받은 블록으로 바꿈 =====
