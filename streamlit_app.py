@@ -4,6 +4,19 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
+# 🎨 [디자인 요소 적용 1] Plotly 전역 색상 팔레트 및 강조색 설정
+ACCENT, GRAY = "#1F3A5F", "#BDBDBD"
+px.defaults.color_discrete_map = {
+    "INSTA_첫주문쿠폰": ACCENT,
+    "organic": "#8C8C8C",
+    "NAVER_검색광고": "#A6A6A6",
+    "GOOGLE_앱설치": GRAY,
+    "친구초대": "#DADADA",
+    "Android": "#8C8C8C",
+    "iOS": GRAY,
+}
+px.defaults.color_discrete_sequence = [GRAY]
+
 st.set_page_config(page_title="신규 권역 성장 기회 대시보드", layout="wide")
 st.title("신규 권역 성장 기회 대시보드")                                  # ✏️ 6주차 메인 제목
 st.caption("가입월 · 가입 채널 · 플랫폼별 | 2025.09 ~ 2026.07 가입자")     # ✏️ 6주차 부제
@@ -22,9 +35,7 @@ NEEDED = {                                 # ✏️ 이번 대시보드에 필�
 def get_db():                              # 필요한 컬럼만 메모리 DB에 올리고, 정제 테이블 events·odr을 생성(처음 한 번)
     con = sqlite3.connect(":memory:", check_same_thread=False)
     for name, cols in NEEDED.items():
-        # dtype=str: 고객 ID의 앞자리 0(0000002)이 숫자로 바뀌지 않게 글자로 읽음
         pd.read_csv(f"{DATA_DIR}/{name}.csv", usecols=cols, dtype=str).to_sql(name, con, index=False)
-    # ✏️ 5주차 제외 규칙: 테스트 계정(T로 시작) 제외 · 이벤트 100건 이상인 비정상 세션 제외
     con.execute("""
         CREATE TABLE events AS
         SELECT *
@@ -34,7 +45,6 @@ def get_db():                              # 필요한 컬럼만 메모리 DB에
                                    GROUP BY session_id HAVING COUNT(*) >= 100)
     """)
     con.execute("CREATE TABLE odr AS SELECT * FROM orders WHERE customer_id NOT LIKE 'T%'")
-    # 고객별로 묶는 집계가 빨라지도록 customer_id에 인덱스를 붙임
     con.execute("CREATE INDEX idx_events_customer ON events(customer_id)")
     con.execute("CREATE INDEX idx_odr_customer ON odr(customer_id)")
     return con
@@ -46,7 +56,6 @@ def get_db():                              # 필요한 컬럼만 메모리 DB에
 def query(sql):                            # SQL을 실행해 표로 돌려줌
     return pd.read_sql(sql, get_db())
 
-# 고객별 가입일 · 가입 채널 · 플랫폼 (가입 이벤트 기준) - 두 쿼리 모두 사용
 SQL_SIGNUP = """
 su AS (
     SELECT customer_id,
@@ -59,16 +68,15 @@ su AS (
 )
 """
 
-# ✏️ 가입월 × 가입 채널 × 플랫폼별 가입 후 30일 퍼널 (예제 Q1 · Q3)
 SQL_SIGNUP_FUNNEL = f"""
 WITH {SQL_SIGNUP},
-ev AS (                                     -- 가입 후 30일 안의 행동
+ev AS (
     SELECT DISTINCT e.customer_id, e.event_name
       FROM events e
       JOIN su ON e.customer_id = su.customer_id
      WHERE julianday(DATE(e.event_datetime)) - julianday(su.가입일) BETWEEN 0 AND 30
 ),
-fo AS (                                     -- 고객별 첫 주문일
+fo AS (
     SELECT customer_id, DATE(MIN(order_datetime)) AS 첫주문일
       FROM odr
      GROUP BY customer_id
@@ -85,12 +93,11 @@ SELECT strftime('%Y-%m', su.가입일) AS 가입월,
   FROM su
   LEFT JOIN ev ON su.customer_id = ev.customer_id
   LEFT JOIN fo ON su.customer_id = fo.customer_id
- WHERE su.가입일 <= '2026-07-31'            -- 30일을 다 볼 수 있는 가입자만
+ WHERE su.가입일 <= '2026-07-31'
  GROUP BY 1, 2, 3
  ORDER BY 1, 2, 3
 """
 
-# ✏️ 가입월 × 가입 채널 × 플랫폼별 30일 재주문 (예제 Q2, 분모가 첫 주문 고객이라 표를 따로 만듦)
 SQL_REORDER = f"""
 WITH {SQL_SIGNUP},
 seq AS (
@@ -108,7 +115,7 @@ SELECT strftime('%Y-%m', su.가입일) AS 가입월,
   FROM seq
   JOIN su ON seq.customer_id = su.customer_id
  WHERE seq.순번 = 1
-   AND seq.order_datetime < '2026-08-01'    -- 30일을 다 볼 수 있는 첫 주문만
+   AND seq.order_datetime < '2026-08-01'
  GROUP BY 1, 2, 3
  ORDER BY 1, 2, 3
 """
@@ -117,9 +124,8 @@ SELECT strftime('%Y-%m', su.가입일) AS 가입월,
 def load_data():
     return query(SQL_SIGNUP_FUNNEL), query(SQL_REORDER)
 
-df, rd = load_data()                       # df: 가입 후 30일 퍼널 / rd: 30일 재주문
+df, rd = load_data()
 
-# 📌 AI 해설 사전 적용
 AI_NOTES = {
     "전체": "전체 가입자 2774명의 30일 첫 주문 전환율은 69.9%이며 가장 낮은 전환율을 기록한 구간은 식당조회에서 장바구니로 이어지는 84.1% 구간이다. 2026-01 가입월 이후 전체 전환율이 하락세를 보이는 양상이 확인된다. 마케팅 캠페인이나 유입 경로의 변화가 전체 지표 하락에 영향을 미쳤는지 확인이 필요하다.",
     "Android": "안드로이드 플랫폼의 가입자는 1502명으로 30일 첫 주문 전환율은 69.2%이고 식당조회에서 장바구니 구간이 83.8%로 가장 낮다. 전체 평균과 유사한 흐름을 보이나 iOS 대비 소폭 낮은 수치를 기록했다. 플랫폼별 사용자 경험 차이가 전환율에 미친 영향에 대해 확인이 필요하다.",
@@ -135,12 +141,12 @@ AI_SOURCE = "🤖 Gemini가 미리 만든 해설 · 전체 기간 기준"
 # ------------------------------------------------------------
 # 2. 사이드바 필터 — 두 표에 같은 조건을 적용
 # ------------------------------------------------------------
-SMALL = 100                                # ✏️ 이보다 가입자가 적은 집단은 "작은 집단"
+SMALL = 100
 
 if "reset" not in st.session_state:
     st.session_state.reset = 0
 
-def reset_filters():                       # 번호가 바뀌면 위젯이 처음 상태로 새로 만들어짐
+def reset_filters():
     st.session_state.reset += 1
 
 n = st.session_state.reset
@@ -155,18 +161,17 @@ sel_channels = st.sidebar.multiselect("가입 채널", channels, default=channel
 sel_platforms = st.sidebar.multiselect("플랫폼", platforms, default=platforms, key=f"플랫폼_{n}")
 with st.sidebar.expander("고급 설정"):
     base_start, base_end = st.select_slider(
-        "평소 범위 기준 기간", options=months, value=(months[0], months[3]), key=f"기준_{n}",   # ✏️ 문제가 없던 기간
+        "평소 범위 기준 기간", options=months, value=(months[0], months[3]), key=f"기준_{n}",
         help="문제가 없던 기간을 고르세요. 이 기간의 월별 값 범위를 '평소 범위'로 씁니다.")
     hide_small = st.checkbox(f"가입자 {SMALL}명 미만 집단 제외 (집단 비교 · 드릴다운)", key=f"작은집단_{n}")
 st.sidebar.button("필터 초기화", on_click=reset_filters)
 
-# 집단 조건(가입 채널 · 플랫폼)만 적용한 데이터 g · rg, 기간까지 적용한 데이터 f · rf
 g = df[df["가입채널"].isin(sel_channels) & df["플랫폼"].isin(sel_platforms)]
 f = g[(g["가입월"] >= start) & (g["가입월"] <= end)]
 rg = rd[rd["가입채널"].isin(sel_channels) & rd["플랫폼"].isin(sel_platforms)]
 rf = rg[(rg["가입월"] >= start) & (rg["가입월"] <= end)]
 
-def label(selected, all_values):           # 조건 줄에 쓸 말: 모두 고르면 "전체"
+def label(selected, all_values):
     if len(selected) == len(all_values):
         return "전체"
     return ", ".join(selected) if selected else "선택 없음"
@@ -191,7 +196,6 @@ tab_overview, tab_explore, tab_action = st.tabs(["📊 개요", "🔍 탐색", "
 with tab_overview:
     st.caption("이 탭에서 볼 수 있는 것: 핵심 숫자와 그 숫자를 읽는 법, 6주차 리포트의 차트 3장 (필터 적용)")
 
-    # 3-1. KPI 카드 — 5주차 지표 3개
     t = f[["가입자", "식당조회", "장바구니", "첫주문30일"]].sum()
     tr = rf[["첫주문고객", "재주문30일"]].sum()
     c1, c2, c3 = st.columns(3)
@@ -256,12 +260,10 @@ with tab_overview:
         with st.expander("🤖 AI 해설 · 전체", expanded=False):
             st.write(AI_NOTES.get("전체", "아직 해설이 없습니다."))
         st.caption(AI_SOURCE)
-# ===== [블록 A] 끝 =====
 
 with tab_overview:
     st.divider()
 
-    # ✏️ 3-2. 차트 - 6주차 차트 ① 문제 · ② 원인 · ③ 제안
     left, right = st.columns(2)
 
     # ① 문제: 가입월별 30일 첫 주문 전환율
@@ -271,7 +273,7 @@ with tab_overview:
                    labels={"가입월": "가입월", "첫주문전환율": "30일 첫 주문 전환율(%)", "가입자": "가입자(명)"},
                    title="① 가입월별 30일 첫 주문 전환율")
     fig1.update_layout(xaxis_title="")
-    fig1.update_xaxes(type="category")       # 가입월(2025-09)을 날짜가 아니라 글자 그대로 표시
+    fig1.update_xaxes(type="category")
     left.plotly_chart(fig1, width="stretch")
 
     # ② 원인: 가입 채널별 식당 조회 → 장바구니 전환율
@@ -285,6 +287,11 @@ with tab_overview:
                   title="② 가입 채널별 식당 조회 → 장바구니 전환율")
     fig2.update_xaxes(range=[0, ch["장바구니전환율"].max() * 1.2])
     fig2.update_layout(yaxis_title="")
+
+    # 🎨 [디자인 요소 적용] INSTA_첫주문쿠폰 강조색 및 x축 레이블 숨김
+    fig2.update_traces(marker_color=[ACCENT if c == "INSTA_첫주문쿠폰" else GRAY for c in ch["가입채널"]])
+    fig2.update_xaxes(visible=False)
+
     right.plotly_chart(fig2, width="stretch")
 
     # ③ 제안: 가입 채널별 30일 재주문율
@@ -486,7 +493,6 @@ with tab_explore:
         with st.expander(f"🤖 AI 해설 · {selected_group}", expanded=False):
             st.write(AI_NOTES.get(selected_group, "이 집단의 해설은 아직 없습니다."))
         st.caption(AI_SOURCE)
-# ===== [블록 B] 끝 =====
 
 # ===== [블록 C] 액션 =====
 with tab_action:
