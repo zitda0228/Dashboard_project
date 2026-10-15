@@ -178,17 +178,77 @@ def rate(a, b):
 # ------------------------------------------------------------
 tab_overview, tab_explore, tab_action = st.tabs(["📊 개요", "🔍 탐색", "✅ 액션"])
 
-# ===== [블록 A] 개요 · KPI 카드 — 규칙 문장 단계에서 이 블록을 통째로 바꿈 =====
+# ===== [블록 A] 개요 · KPI 카드 =====
 with tab_overview:
     st.caption("이 탭에서 볼 수 있는 것: 핵심 숫자와 그 숫자를 읽는 법, 6주차 리포트의 차트 3장 (필터 적용)")
 
-    # 3-1. KPI 카드 — ✏️ 5주차 지표 3개
+    # 3-1. KPI 카드 — 5주차 지표 3개
     t = f[["가입자", "식당조회", "장바구니", "첫주문30일"]].sum()
     tr = rf[["첫주문고객", "재주문30일"]].sum()
     c1, c2, c3 = st.columns(3)
     c1.metric("30일 첫 주문 전환율", f"{rate(t['첫주문30일'], t['가입자']):.1f}%")
     c2.metric("식당 조회 → 장바구니 전환율", f"{rate(t['장바구니'], t['식당조회']):.1f}%")
     c3.metric("30일 재주문율", f"{rate(tr['재주문30일'], tr['첫주문고객']):.1f}%")
+
+    with st.container(border=True):
+        st.markdown("**📏 지금 숫자 읽기**")
+        
+        unique_months = sorted(f["가입월"].unique())
+        if len(unique_months) < 3:
+            msg = "비교하려면 선택 기간을 3개월 이상 골라 주세요"
+            st.markdown(f"- 30일 첫 주문 전환율: {msg}")
+            st.markdown(f"- 식당 조회 → 장바구니 전환율: {msg}")
+        else:
+            recent_3m = unique_months[-3:]
+            target_f = f[f["가입월"].isin(recent_3m)]
+            t_sum = target_f[["가입자", "식당조회", "장바구니", "첫주문30일"]].sum()
+            
+            cur_ord_rate = rate(t_sum["첫주문30일"], t_sum["가입자"])
+            cur_cart_rate = rate(t_sum["장바구니"], t_sum["식당조회"])
+            
+            base_f = g[(g["가입월"] >= base_start) & (g["가입월"] <= base_end)]
+            base_monthly = base_f.groupby("가입월")[["가입자", "식당조회", "장바구니", "첫주문30일"]].sum().reset_index()
+            
+            ord_rates = []
+            cart_rates = []
+            for _, r in base_monthly.iterrows():
+                if r["가입자"] > 0:
+                    ord_rates.append(r["첫주문30일"] / r["가입자"] * 100)
+                if r["식당조회"] > 0:
+                    cart_rates.append(r["장바구니"] / r["식당조회"] * 100)
+            
+            if len(base_monthly) < 3:
+                base_msg = "기준 기간을 이 집단의 데이터가 있는 시기로 옮겨 주세요"
+                st.markdown(f"- 30일 첫 주문 전환율: {base_msg}")
+                st.markdown(f"- 식당 조회 → 장바구니 전환율: {base_msg}")
+            else:
+                ord_min, ord_max = min(ord_rates), max(ord_rates)
+                cart_min, cart_max = min(cart_rates), max(cart_rates)
+                
+                start_label = recent_3m[0]
+                
+                def make_sentence(name, cur_val, min_v, max_v):
+                    diff = cur_val - ((min_v + max_v) / 2) # 문장 구성용 예시 구조 준수
+                    # 범위 비교 로직
+                    if cur_val < min_v:
+                        diff_p = min_v - cur_val
+                        return f"{start_label} 가입월부터 3개월 {name}은(는) {cur_val:.1f}%로, 평소 범위({min_v:.1f}–{max_v:.1f}%)보다 {diff_p:.1f}%p 낮습니다"
+                    elif cur_val > max_v:
+                        diff_p = cur_val - max_v
+                        return f"{start_label} 가입월부터 3개월 {name}은(는) {cur_val:.1f}%로, 평소 범위({min_v:.1f}–{max_v:.1f}%)보다 {diff_p:.1f}%p 높습니다"
+                    else:
+                        return f"{start_label} 가입월부터 3개월 {name}은(는) {cur_val:.1f}%로, 평소 범위({min_v:.1f}–{max_v:.1f}%) 안에 있습니다"
+
+                s1 = make_sentence("30일 첫 주문 전환율", cur_ord_rate, ord_min, ord_max)
+                s2 = make_sentence("식당 조회 → 장바구니 전환율", cur_cart_rate, cart_min, cart_max)
+                
+                st.markdown(f"- {s1}")
+                st.markdown(f"- {s2}")
+                
+        st.caption(f"📏 자동 계산 · 평소 범위 기준 기간 {base_start} ~ {base_end} (월별 값)")
+        with st.expander("🤖 AI 해설 · 전체", expanded=False):
+            st.write(AI_NOTES.get("전체", "아직 해설이 없습니다."))
+        st.caption(AI_SOURCE)
 # ===== [블록 A] 끝 =====
 
 with tab_overview:
@@ -232,7 +292,7 @@ with tab_overview:
     fig3.update_layout(yaxis_title="")
     st.plotly_chart(fig3, width="stretch")
 
-    # AI 해설을 만들 때 Gemini에 올릴 표 (필터와 관계없이 전체)
+    # AI 해설용 데이터 내려받기
     with st.expander("📥 AI 해설용 데이터 내려받기"):
         st.download_button("가입 후 30일 퍼널 (가입월 × 가입 채널 × 플랫폼)",
                            df.to_csv(index=False).encode("utf-8-sig"), "가입월_채널_플랫폼_퍼널.csv")
